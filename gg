@@ -29,10 +29,74 @@ local function tweenTo(pos)
 end
 local sel={}
 local function hasF()for _,v in pairs(sel)do if v then return true end end return false end
-local RETURN,RET_BUSY,RET_OK
+local RETURN,RET_BUSY,RET_OK,RET_STOP
 for _,p in ipairs({CG,LP:WaitForChild("PlayerGui")})do pcall(function()for _,n in ipairs({"WxV_Top10","WxV_AUTO","WxV_TESTE","WxV_Teleport","WxV_TP"})do local o=p:FindFirstChild(n)if o then o:Destroy()end end end)end
-local MISC_ORDEM={"AUTO PLACE EGG","AUTO HATCH","AUTO TREADMILL"}
-local MISC_FUNCS={["AUTO PLACE EGG"]=function(on)FLAGS.place=on print("[WxV] PLACE",on) end,["AUTO HATCH"]=function(on)FLAGS.hatch=on print("[WxV] HATCH",on) end,["AUTO TREADMILL"]=function(on)FLAGS.tread=on print("[WxV] TREAD",on) end}
+local MISC_ORDEM={"AUTO PLACE EGG","AUTO HATCH","AUTO TREADMILL","ANTI TRAP","INSTANT INTERACTION","ANTI KNOCKBACK"}
+local antiTrapEnabled=false
+local function disableTrapTouch(trap)
+ if not antiTrapEnabled or not trap then return end
+ pcall(function()
+  local touch=trap:FindFirstChild("TouchInterest",true)
+  if touch then touch:Destroy() end
+ end)
+end
+local trapConnection=nil
+local function setAntiTrap(on)
+ antiTrapEnabled=on
+ if trapConnection then trapConnection:Disconnect() trapConnection=nil end
+ if not on then return end
+ pcall(function()
+  for _,trap in ipairs(workspace:QueryDescendants("#PlayerTrap"))do disableTrapTouch(trap)end
+ end)
+ trapConnection=workspace.DescendantAdded:Connect(function(obj)
+  if not alive() then if trapConnection then trapConnection:Disconnect() trapConnection=nil end return end
+  if obj.Name=="PlayerTrap" then disableTrapTouch(obj) end
+ end)
+end
+local instantEnabled=false
+local instantConn=nil
+local originalHolds={}
+local function setInstant(on)
+ instantEnabled=on
+ if instantConn then instantConn:Disconnect() instantConn=nil end
+ if not on then
+  for prompt,duration in pairs(originalHolds) do
+   if prompt and prompt.Parent then pcall(function()prompt.HoldDuration=duration end)end
+  end
+  table.clear(originalHolds)
+  return
+ end
+ instantConn=game:GetService("ProximityPromptService").PromptButtonHoldBegan:Connect(function(prompt,player)
+  if not alive() then if instantConn then instantConn:Disconnect() instantConn=nil end return end
+  if player==LP and prompt and prompt.Name=="CarryAreaEgg" then
+   if originalHolds[prompt]==nil then originalHolds[prompt]=prompt.HoldDuration end
+   pcall(function()prompt.HoldDuration=0 end)
+  end
+ end)
+end
+local knockDisabled={}
+local function setKnockback(on)
+ local packages=RS:FindFirstChild("Packages")
+ local networking=packages and packages:FindFirstChild("Networking")
+ local ev=networking and networking:FindFirstChild("RE/RigSync/Refresh")
+ if not on then
+  for conn in pairs(knockDisabled) do
+   pcall(function()if conn.Enable then conn:Enable()end end)
+  end
+  table.clear(knockDisabled)
+  return
+ end
+ if not ev or type(getconnections)~="function" then return end
+ local ok,connections=pcall(getconnections,ev.OnClientEvent)
+ if not ok or type(connections)~="table" then return end
+ for _,conn in ipairs(connections)do
+  if not knockDisabled[conn] then
+   local success=pcall(function()conn:Disable()end)
+   if success then knockDisabled[conn]=true end
+  end
+ end
+end
+local MISC_FUNCS={["AUTO PLACE EGG"]=function(on)FLAGS.place=on print("[WxV] PLACE",on) end,["AUTO HATCH"]=function(on)FLAGS.hatch=on print("[WxV] HATCH",on) end,["AUTO TREADMILL"]=function(on)FLAGS.tread=on print("[WxV] TREAD",on) end,["ANTI TRAP"]=setAntiTrap,["INSTANT INTERACTION"]=setInstant,["ANTI KNOCKBACK"]=setKnockback}
 local PK=RS:WaitForChild("Packages",10)
 local NET=PK and PK:WaitForChild("Networking",10)
 local RFc={}
@@ -99,7 +163,6 @@ if not ok or resultado==false then
  onTread=false
  return false
 end
--- O retorno positivo nao garante que a animacao de montar terminou.
 task.wait(.5)
 onTread=true
 treadMountedAt=os.clock()
@@ -232,16 +295,6 @@ task.wait(HC.Del)
 local ok2,fin=pcall(function()return Fr:InvokeServer(e.u)end)
 return ok2 and fin and true or false
 end
-local function hatchPass()
-local n=0
-for _,e in ipairs(readyEggs())do
-if not alive()then break end
-if os.clock()>=(retryAt[e.u]or 0)then
-if hatchOne(e)then retryAt[e.u]=nil n+=1 else retryAt[e.u]=os.clock()+HC.Retry end
-end
-end
-return n
-end
 
 -- ================= AUTO RETURN (sem UI, sempre TP) =================
 do
@@ -334,6 +387,7 @@ if ev then ev.OnClientEvent:Connect(function(d)if not alive()or type(d)~="table"
 end)
 RET_BUSY=function()return running or armado end
 RET_OK=function()return retOk end
+RET_STOP=function()armado=false running=false end
 RETURN=function()
 if running then return end
 retOk=false armado=true
@@ -444,40 +498,56 @@ if totalSlot>0 then firstScan=false end
 end
 local function listaVisivel()local agora,l=os.clock(),{}for _,t in pairs(tracked)do if t.d and agora-t.lastMove>=STILL_TIME then l[#l+1]=t.d end end return l end
 local manualGo=nil
+local goCancel=0
+local goRunning=nil
+local farmEpoch=0
 local function parar()
  if manualGo then
   local b=manualGo.btn
   if b and b.Parent then b.Text="Go" b.BackgroundColor3=Color3.fromRGB(40,165,75) end
  end
  manualGo=nil
+ goCancel+=1
+ if goRunning then
+  local b=goRunning.btn
+  if b and b.Parent then b.Text="Go" b.BackgroundColor3=Color3.fromRGB(40,165,75) end
+  goRunning=nil
+ end
+ local c=LP.Character
+ local hum=c and c:FindFirstChildOfClass("Humanoid")
+ local root=HRP()
+ if hum and root then hum:MoveTo(root.Position) end
 end
-local function firePrompt()
-local hrp=HRP()if not hrp then return end
-local best,bd
-for _,o in ipairs(workspace:GetDescendants())do
-if o:IsA("ProximityPrompt")and(o.Name=="CarryHalloweenEgg"or o.Name=="CarryAreaEgg")then
-local pa=o.Parent
-if pa and(pa:IsA("BasePart")or pa:IsA("Attachment"))then
-local pp=pa:IsA("Attachment")and pa.WorldPosition or pa.Position
-local d=(pp-hrp.Position).Magnitude
-if d<30 and(not bd or d<bd)then best,bd=o,d end
-end
-end
-end
-if best then
-pcall(function()best.HoldDuration=0 best.RequiresLineOfSight=false best.MaxActivationDistance=50 end)
-if fireproximityprompt then pcall(fireproximityprompt,best)end
-else warn("Nenhum prompt perto")end
+local function firePrompt(alvoPrompt)
+ local best=alvoPrompt
+ if not best then
+  local hrp=HRP()if not hrp then return end
+  local bd
+  for _,o in ipairs(workspace:GetDescendants())do
+   if o:IsA("ProximityPrompt")and(o.Name=="CarryHalloweenEgg"or o.Name=="CarryAreaEgg")then
+    local pa=o.Parent
+    if pa and(pa:IsA("BasePart")or pa:IsA("Attachment"))then
+     local pp=pa:IsA("Attachment")and pa.WorldPosition or pa.Position
+     local d=(pp-hrp.Position).Magnitude
+     if d<30 and(not bd or d<bd)then best,bd=o,d end
+    end
+   end
+  end
+ end
+ if best then
+  pcall(function()best.HoldDuration=0 best.RequiresLineOfSight=false best.MaxActivationDistance=50 end)
+  if fireproximityprompt then pcall(fireproximityprompt,best)end
+ else warn("Nenhum prompt perto")end
 end
 local function andarAteOvo(alvo,btnGo)
- if manualGo and manualGo.btn==btnGo then parar() return end
+ if (manualGo and manualGo.btn==btnGo) or (goRunning and goRunning.btn==btnGo) then parar() if RET_STOP then RET_STOP() end return end
  parar()
  manualGo={pos=alvo,btn=btnGo}
  btnGo.Text="Queued"
  btnGo.BackgroundColor3=Color3.fromRGB(220,145,35)
 end
 
--- ================= GERENCIADOR DE TAREFAS (sem interromper) =================
+-- ================= GERENCIADOR DE TAREFAS =================
 local fail={}
 local function topLista()
 local any,out=hasF(),{}
@@ -488,40 +558,96 @@ table.sort(out,function(a,b)if a.final~=b.final then return a.final>b.final end 
 local top={}for i=1,math.min(#out,10)do top[i]=out[i]end
 return top
 end
-local function irOvo(alvo)
-local t0=os.clock()
-while alive()and os.clock()-t0<45 do
-local c=LP.Character local hum=c and c:FindFirstChildOfClass("Humanoid")local h=HRP()
-if not hum or not h then return false end
-if(Vector3.new(h.Position.X,0,h.Position.Z)-Vector3.new(alvo.X,0,alvo.Z)).Magnitude<=3 then return true end
-hum:MoveTo(alvo)task.wait(.1)
+local function achaPrompt(alvo)
+ local best,bd
+ for _,o in ipairs(workspace:GetDescendants())do
+  if o:IsA("ProximityPrompt")and(o.Name=="CarryHalloweenEgg"or o.Name=="CarryAreaEgg")then
+   local pa=o.Parent
+   if pa and(pa:IsA("BasePart")or pa:IsA("Attachment"))then
+    local pp=pa:IsA("Attachment")and pa.WorldPosition or pa.Position
+    local d=Vector3.new(pp.X-alvo.X,0,pp.Z-alvo.Z).Magnitude
+    if d<15 and(not bd or d<bd)then best,bd=o,d end
+   end
+  end
+ end
+ return best
 end
-return false
+local function promptPos(p)
+ local pa=p.Parent
+ return pa:IsA("Attachment")and pa.WorldPosition or pa.Position
+end
+local function travar(pos,seg,cancelado)
+ local fim=os.clock()+seg
+ repeat
+  if cancelado and cancelado()then return false end
+  local h=HRP()
+  local c=LP.Character
+  local hum=c and c:FindFirstChildOfClass("Humanoid")
+  if not h or not hum then return false end
+  hum:Move(Vector3.zero)
+  h.AssemblyLinearVelocity=Vector3.zero
+  h.AssemblyAngularVelocity=Vector3.zero
+  h.CFrame=CFrame.new(pos.X,h.Position.Y,pos.Z)*h.CFrame.Rotation
+  RUN.Heartbeat:Wait()
+ until os.clock()>=fim or not alive()
+ return alive()
+end
+local function irOvo(alvo,cancelado)
+ if typeof(alvo)~="Vector3"then return false end
+ local prompt=achaPrompt(alvo)
+ local ponto=prompt and promptPos(prompt)or alvo
+ local t0=os.clock()
+ while alive()and os.clock()-t0<45 do
+  if cancelado and cancelado()then return false end
+  local c=LP.Character
+  local hum=c and c:FindFirstChildOfClass("Humanoid")
+  local h=HRP()
+  if not hum or not h then return false end
+  local dist=Vector3.new(h.Position.X-ponto.X,0,h.Position.Z-ponto.Z).Magnitude
+  if dist<=5 then
+   if not travar(ponto,.05,cancelado)then return false end
+   return true,prompt,ponto
+  end
+  hum:MoveTo(ponto)
+  task.wait(.03)
+ end
+ return false
 end
 local function pegar(p)
-if not irOvo(p.pos)then return false end
-task.wait(.2)firePrompt()
-if RETURN then pcall(RETURN)end
-local t=os.clock()
-while RET_BUSY and RET_BUSY()and alive()and os.clock()-t<90 do task.wait(.1)end
-return RET_OK and RET_OK()or false
+ local token=farmEpoch
+ local function cancelado()return not FLAGS.farm or token~=farmEpoch end
+ local ok,prompt,ponto=irOvo(p.pos,cancelado)
+ if not ok then return false end
+ if not travar(ponto,.2,cancelado)then return false end
+ firePrompt(prompt)
+ if not travar(ponto,.15,cancelado)then return false end
+ if RETURN then pcall(RETURN)end
+ local t=os.clock()
+ while RET_BUSY and RET_BUSY()and alive()and os.clock()-t<90 do
+  if cancelado()then return false end
+  task.wait(.05)
+ end
+ return RET_OK and RET_OK()or false
 end
--- Escalonador cooperativo: cada ação termina antes da próxima.
--- GO é manual e fica na fila; Place > Hatch > GO > Farm > Treadmill.
 local function executarGo()
  local pedido=manualGo
  if not pedido then return end
  manualGo=nil
+ goRunning=pedido
+ local token=goCancel
  local b=pedido.btn
  if b and b.Parent then b.Text="Stop" b.BackgroundColor3=Color3.fromRGB(210,55,55) end
- local ok=irOvo(pedido.pos)
- if ok then
-  task.wait(.2)
-  firePrompt()
+ local cancelaGo=function()return token~=goCancel end
+ local ok,prompt,ponto=irOvo(pedido.pos,cancelaGo)
+ if ok and token==goCancel then
+  if not travar(ponto,.2,cancelaGo)then return end
+  firePrompt(prompt)
+  if not travar(ponto,.15,cancelaGo)then return end
   if RETURN then RETURN() end
   local t=os.clock()
-  while alive() and RET_BUSY and RET_BUSY() and os.clock()-t<100 do task.wait(.1) end
+  while alive() and RET_BUSY and RET_BUSY() and token==goCancel and os.clock()-t<100 do task.wait(.1) end
  end
+ if goRunning==pedido then goRunning=nil end
  if b and b.Parent then b.Text="Go" b.BackgroundColor3=Color3.fromRGB(40,165,75) end
 end
 local function executarUma(titulo,fn)
@@ -536,9 +662,6 @@ end
 task.spawn(function()
  while alive() do
   local ok,err=pcall(function()
-   -- Se o jogador sair da esteira manualmente, nao usar AskDoff:
-   -- somente liberar o estado local e deixar o escalonador remontar
-   -- quando nao houver nenhuma tarefa de prioridade maior.
    if onTread and ACTIVE_TASK=="IDLE" and os.clock()-treadMountedAt>2 then
     local dist=treadmillDistance()
     if dist and dist>TREAD_LEAVE_DISTANCE then
@@ -575,7 +698,7 @@ task.spawn(function()
     executarUma("FARM",function()
      local p=topLista()[1]
      if not p then return end
-     if not pegar(p)then fail[p.uid]=os.clock()+30 end
+     if not pegar(p) and FLAGS.farm then fail[p.uid]=os.clock()+30 end
     end)
    elseif FLAGS.tread then
     if not onTread and os.clock()>=treadRetryAt then
@@ -584,7 +707,6 @@ task.spawn(function()
     end
     task.wait(.5)
    else
-    -- Nenhuma tarefa pendente: nao chamar AskDoff sem motivo.
     task.wait(.3)
    end
   end)
@@ -614,18 +736,13 @@ local dragging,ds,sp
 handle.InputBegan:Connect(function(i)if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true ds=i.Position sp=frame.Position i.Changed:Connect(function()if i.UserInputState==Enum.UserInputState.End then dragging=false end end)end end)
 UIS.InputChanged:Connect(function(i)if dragging and(i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch)then local d=i.Position-ds frame.Position=UDim2.new(sp.X.Scale,sp.X.Offset+d.X,sp.Y.Scale,sp.Y.Offset+d.Y)end end)
 end
-local function dragClick(frame,onClick)
-local dragging,moved,ds,sp
-frame.InputBegan:Connect(function(i)if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging,moved=true,false ds,sp=i.Position,frame.Position i.Changed:Connect(function()if i.UserInputState==Enum.UserInputState.End then dragging=false if not moved and onClick then onClick()end end end)end end)
-UIS.InputChanged:Connect(function(i)if dragging and(i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch)then local d=i.Position-ds if d.Magnitude>6 then moved=true end if moved then frame.Position=UDim2.new(sp.X.Scale,sp.X.Offset+d.X,sp.Y.Scale,sp.Y.Offset+d.Y)end end end)
-end
 local function addClick(b)
 local os0=b.Size
 b.MouseButton1Down:Connect(function()tocarClick()TS:Create(b,TweenInfo.new(.1),{Size=UDim2.new(os0.X.Scale,os0.X.Offset-3,os0.Y.Scale,os0.Y.Offset-3)}):Play()end)
 b.MouseButton1Up:Connect(function()TS:Create(b,TweenInfo.new(.1),{Size=os0}):Play()end)
 b.MouseLeave:Connect(function()TS:Create(b,TweenInfo.new(.1),{Size=os0}):Play()end)
 end
-local MW,MH,CH=238,322,56
+local MW,MH,CH=280,380,76
 local Main=N("Frame",SG,{Size=UDim2.fromOffset(MW,MH),Position=UDim2.new(1,-MW-8,0,44),BackgroundColor3=BG,BorderSizePixel=0,Active=true,ClipsDescendants=true})
 cr(Main,9)N("UIStroke",Main,{Color=Color3.fromRGB(150,20,20),Thickness=1.5})
 local mainScale=N("UIScale",Main,{Scale=1})
@@ -642,19 +759,24 @@ local fbtn=N("TextButton",hd,{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1
 local xb=N("TextButton",hd,{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-5,.5,0),Size=UDim2.fromOffset(16,16),BackgroundColor3=Color3.fromRGB(70,26,26),Text="X",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=8,AutoButtonColor=false})cr(xb,8)addClick(xb)
 makeDraggable(Main,hd)
 local TAB_ON,TAB_OFF=Color3.fromRGB(200,30,30),Color3.fromRGB(38,38,48)
-local tabF=N("TextButton",Main,{Position=UDim2.fromOffset(8,30),Size=UDim2.new(.5,-10,0,18),BackgroundColor3=TAB_ON,Text="FARM",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=9,AutoButtonColor=false})cr(tabF,5)
-local tabM=N("TextButton",Main,{Position=UDim2.new(.5,2,0,30),Size=UDim2.new(.5,-10,0,18),BackgroundColor3=TAB_OFF,Text="MISC",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=9,AutoButtonColor=false})cr(tabM,5)
+local tabF=N("TextButton",Main,{Position=UDim2.fromOffset(8,30),Size=UDim2.new(1/3,-8,0,18),BackgroundColor3=TAB_ON,Text="FARM",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=9,AutoButtonColor=false})cr(tabF,5)
+local tabM=N("TextButton",Main,{Position=UDim2.new(1/3,3,0,30),Size=UDim2.new(1/3,-6,0,18),BackgroundColor3=TAB_OFF,Text="MISC",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=9,AutoButtonColor=false})cr(tabM,5)
+local tabH=N("TextButton",Main,{Position=UDim2.new(2/3,0,0,30),Size=UDim2.new(1/3,-8,0,18),BackgroundColor3=TAB_OFF,Text="HALLOWEEN",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=8,AutoButtonColor=false})cr(tabH,5)
 local farmPage=N("Frame",Main,{Position=UDim2.fromOffset(0,52),Size=UDim2.new(1,0,1,-52),BackgroundTransparency=1})
 local miscPage=N("Frame",Main,{Position=UDim2.fromOffset(0,52),Size=UDim2.new(1,0,1,-52),BackgroundTransparency=1,Visible=false})
+local halloweenPage=N("Frame",Main,{Position=UDim2.fromOffset(0,52),Size=UDim2.new(1,0,1,-52),BackgroundTransparency=1,Visible=false})
+N("TextLabel",halloweenPage,{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.new(1,-16,0,60),BackgroundTransparency=1,Text="COMING SOON",TextColor3=RED,Font=Enum.Font.GothamBold,TextSize=21,TextXAlignment=Enum.TextXAlignment.Center})
 local FWHide=function()end
 local function setTab(t)
-local f=(t=="FARM")
-farmPage.Visible=f miscPage.Visible=not f
-if not f then FWHide()end
-TS:Create(tabF,TweenInfo.new(.15),{BackgroundColor3=f and TAB_ON or TAB_OFF}):Play()
-TS:Create(tabM,TweenInfo.new(.15),{BackgroundColor3=f and TAB_OFF or TAB_ON}):Play()
+ farmPage.Visible=t=="FARM"
+ miscPage.Visible=t=="MISC"
+ halloweenPage.Visible=t=="HALLOWEEN"
+ if t~="FARM" then FWHide()end
+ for _,item in ipairs({{tabF,"FARM"},{tabM,"MISC"},{tabH,"HALLOWEEN"}})do
+  TS:Create(item[1],TweenInfo.new(.15),{BackgroundColor3=t==item[2] and TAB_ON or TAB_OFF}):Play()
+ end
 end
-tabF.MouseButton1Down:Connect(tocarClick)tabM.MouseButton1Down:Connect(tocarClick)
+tabF.MouseButton1Down:Connect(tocarClick)tabM.MouseButton1Down:Connect(tocarClick)tabH.MouseButton1Down:Connect(tocarClick)
 local miscState={}
 for i,nome in ipairs(MISC_ORDEM)do
 local row=N("Frame",miscPage,{Position=UDim2.fromOffset(8,4+(i-1)*34),Size=UDim2.new(1,-16,0,28),BackgroundColor3=CARD,BorderSizePixel=0})
@@ -663,7 +785,8 @@ N("TextLabel",row,{Position=UDim2.fromOffset(10,0),Size=UDim2.new(1,-46,1,0),Bac
 local box=N("TextButton",row,{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-8,.5,0),Size=UDim2.fromOffset(20,20),BackgroundColor3=Color3.fromRGB(44,44,54),Text="",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=12,AutoButtonColor=false})
 cr(box,5)local bs=N("UIStroke",box,{Color=Color3.fromRGB(90,90,105),Thickness=1.5})
 addClick(box)
-miscState[nome]=false
+miscState[nome]=(nome=="ANTI TRAP" or nome=="INSTANT INTERACTION" or nome=="ANTI KNOCKBACK")
+if miscState[nome] then box.Text="✓" box.BackgroundColor3=Color3.fromRGB(40,165,75) bs.Color=Color3.fromRGB(110,255,140) local fn=MISC_FUNCS[nome] if fn then task.spawn(function()pcall(fn,true)end)end end
 box.MouseButton1Click:Connect(function()
 miscState[nome]=not miscState[nome]
 local on=miscState[nome]
@@ -674,6 +797,7 @@ local fn=MISC_FUNCS[nome]
 if fn then task.spawn(function()local ok,err=pcall(fn,on)if not ok then warn("WxV MISC "..nome..":",err)end end)end
 end)
 end
+local ultimoHash=""
 local fm=N("TextButton",farmPage,{Position=UDim2.fromOffset(8,2),Size=UDim2.new(1,-16,0,20),BackgroundColor3=Color3.fromRGB(40,165,75),Text="AUTO FARM",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=9,AutoButtonColor=false})cr(fm,5)addClick(fm)
 local LY=28
 local sc=N("ScrollingFrame",farmPage,{Position=UDim2.fromOffset(5,LY),Size=UDim2.new(1,-10,1,-LY-4),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,ScrollBarImageColor3=Color3.fromRGB(120,120,130),AutomaticCanvasSize=Enum.AutomaticSize.Y,CanvasSize=UDim2.new(),ElasticBehavior=Enum.ElasticBehavior.Never})
@@ -764,38 +888,38 @@ local p=dados[i]
 local cores=RAR[p.rar]or RAR.Common
 local f=N("Frame",sc,{Size=UDim2.new(1,0,0,CH),BackgroundColor3=CARD,BorderSizePixel=0,LayoutOrder=i})
 cr(f,8)N("UIStroke",f,{Color=LINE,Thickness=1})
-N("TextLabel",f,{Position=UDim2.fromOffset(5,2),Size=UDim2.fromOffset(42,10),BackgroundTransparency=1,Text="#"..i,TextColor3=Color3.fromRGB(255,200,40),Font=Enum.Font.GothamBold,TextSize=9})
-local tf=N("Frame",f,{Position=UDim2.fromOffset(5,13),Size=UDim2.fromOffset(40,40),BackgroundColor3=Color3.fromRGB(20,20,26),BorderSizePixel=0,ClipsDescendants=true})
+N("TextLabel",f,{Position=UDim2.fromOffset(5,2),Size=UDim2.fromOffset(55,12),BackgroundTransparency=1,Text="#"..i,TextColor3=Color3.fromRGB(255,200,40),Font=Enum.Font.GothamBold,TextSize=9})
+local tf=N("Frame",f,{Position=UDim2.fromOffset(6,17),Size=UDim2.fromOffset(54,54),BackgroundColor3=Color3.fromRGB(20,20,26),BorderSizePixel=0,ClipsDescendants=true})
 cr(tf,10)N("UIStroke",tf,{Color=cores.txt,Thickness=1.2,Transparency=.2})
 local icon=N("ImageLabel",tf,{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,ScaleType=Enum.ScaleType.Fit,Image=p.icon})
 local vp=N("ViewportFrame",tf,{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Ambient=Color3.fromRGB(190,190,190),LightColor=W})
 local r={vp=vp,icon=icon}
 vps[#vps+1]=r
 carregar3D(r,p)
-N("TextLabel",f,{Position=UDim2.fromOffset(52,6),Size=UDim2.new(1,-92,0,12),BackgroundTransparency=1,Text=p.exibe,TextColor3=W,Font=Enum.Font.GothamBold,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd})
-N("TextLabel",f,{Position=UDim2.fromOffset(52,20),Size=UDim2.new(1,-92,0,15),BackgroundTransparency=1,Text=fmt(p.final).."/s",TextColor3=GREEN,Font=Enum.Font.GothamMedium,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd})
-local pill=N("Frame",f,{Position=UDim2.fromOffset(52,38),Size=UDim2.fromOffset(48,12),BackgroundColor3=cores.bg,BorderSizePixel=0})
+N("TextLabel",f,{Position=UDim2.fromOffset(68,8),Size=UDim2.new(1,-118,0,20),BackgroundTransparency=1,Text=p.exibe,TextColor3=W,Font=Enum.Font.GothamBold,TextSize=14,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd})
+N("TextLabel",f,{Position=UDim2.fromOffset(68,31),Size=UDim2.new(1,-118,0,18),BackgroundTransparency=1,Text=fmt(p.final).."/s",TextColor3=GREEN,Font=Enum.Font.GothamMedium,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd})
+local pill=N("Frame",f,{Position=UDim2.fromOffset(68,55),Size=UDim2.fromOffset(58,15),BackgroundColor3=cores.bg,BorderSizePixel=0})
 cr(pill,6)N("UIStroke",pill,{Color=cores.txt,Thickness=1,Transparency=.5})
 N("TextLabel",pill,{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Text=p.rar:upper(),TextColor3=cores.txt,Font=Enum.Font.GothamBold,TextSize=7})
-local go=N("TextButton",f,{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-6,.5,0),Size=UDim2.fromOffset(32,22),BackgroundColor3=Color3.fromRGB(40,165,75),Text="Go",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=10,AutoButtonColor=false})
-cr(go,6)addClick(go)
+local go=N("TextButton",f,{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-6,.5,0),Size=UDim2.fromOffset(40,28),BackgroundColor3=Color3.fromRGB(40,165,75),Text="Go",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=10,AutoButtonColor=false})
+cr(go,6)go.MouseButton1Down:Connect(tocarClick)
 go.MouseButton1Click:Connect(function()if p.pos then andarAteOvo(p.pos,go)end end)
 end
 end
-local ultimoHash=""
+ultimoHash=""
 local function atualizarLista(force)
 local any=hasF()
 local fil={}
 for _,p in ipairs(listaVisivel())do if not any or sel[p.rar:lower()]==true then fil[#fil+1]=p end end
 if#fil==0 then
 empty.Visible=true
-if totalLidos==0 then empty.Text="Nenhum ovo lido do jogo"elseif totalSlot==0 then empty.Text="Ovos: "..totalLidos.." | nenhum em Slot"elseif any then empty.Text="Nenhum ovo com esse filtro"else empty.Text="Ovos em Slot: "..totalSlot.." (esperando ficar parados)"end
+if totalLidos==0 then empty.Text="Nenhum ovo lido do jogo"elseif totalSlot==0 then empty.Text="Ovos: "..totalLidos.." | nenhum em Slot"elseif any then empty.Text="No Eggs Found"else empty.Text="Ovos em Slot: "..totalSlot.." (esperando ficar parados)"end
 else empty.Visible=false end
 local partes={}
 for _,p in ipairs(fil)do partes[#partes+1]=p.uid..":"..math.floor(p.final)end
 table.sort(partes)
 local hash=table.concat(partes,";")
-if hash~=ultimoHash or force then
+if (hash~=ultimoHash or force) and not goRunning then
 local ok,err=pcall(renderPets,fil)
 if ok then ultimoHash=hash else empty.Visible=true empty.Text="ERRO UI: "..tostring(err):sub(1,80)warn("WxV renderPets:",err)end
 end
@@ -831,15 +955,46 @@ end
 end)
 fm.MouseButton1Click:Connect(function()
 FLAGS.farm=not FLAGS.farm
+farmEpoch+=1
+if not FLAGS.farm and ACTIVE_TASK=="FARM" then
+ local hum=LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+ local root=HRP()
+ if hum and root then hum:MoveTo(root.Position) end
+ if RET_STOP then RET_STOP() end
+end
 fm.Text=FLAGS.farm and"STOP"or"AUTO FARM"
 TS:Create(fm,TweenInfo.new(.15),{BackgroundColor3=FLAGS.farm and Color3.fromRGB(210,55,55)or Color3.fromRGB(40,165,75)}):Play()
 end)
 tabF.MouseButton1Click:Connect(function()setTab("FARM")end)
 tabM.MouseButton1Click:Connect(function()setTab("MISC")end)
+tabH.MouseButton1Click:Connect(function()setTab("HALLOWEEN")end)
 local ball=N("ImageButton",SG,{Size=UDim2.fromOffset(BOLA_TAM,BOLA_TAM),BackgroundColor3=BG,Image=IMG_BOLA,ScaleType=Enum.ScaleType.Crop,AutoButtonColor=false,Visible=false,Active=true,ClipsDescendants=true})
 cr(ball,BOLA_TAM//2)N("UIStroke",ball,{Color=RED,Thickness=2})
 local ballPlaced=false
-dragClick(ball,function()ball.Visible=false animarAbrir()end)
+local ballDragging,ballMoved,ballStart,ballPos=false,false,nil,nil
+ball.InputBegan:Connect(function(input)
+ if input.UserInputType~=Enum.UserInputType.MouseButton1 and input.UserInputType~=Enum.UserInputType.Touch then return end
+ ballDragging=true ballMoved=false ballStart=input.Position ballPos=ball.Position
+end)
+UIS.InputChanged:Connect(function(input)
+ if not ballDragging or not ballStart then return end
+ if input.UserInputType~=Enum.UserInputType.MouseMovement and input.UserInputType~=Enum.UserInputType.Touch then return end
+ local delta=input.Position-ballStart
+ if delta.Magnitude>7 then ballMoved=true end
+ if ballMoved then ball.Position=UDim2.new(ballPos.X.Scale,ballPos.X.Offset+delta.X,ballPos.Y.Scale,ballPos.Y.Offset+delta.Y) end
+end)
+UIS.InputEnded:Connect(function(input)
+ if not ballDragging then return end
+ if input.UserInputType~=Enum.UserInputType.MouseButton1 and input.UserInputType~=Enum.UserInputType.Touch then return end
+ ballDragging=false
+ if not ballMoved and ball.Visible then
+  local pos=input.Position
+  local p=ball.AbsolutePosition local z=ball.AbsoluteSize
+  if pos.X>=p.X and pos.X<=p.X+z.X and pos.Y>=p.Y and pos.Y<=p.Y+z.Y then
+   ball.Visible=false animarAbrir()
+  end
+ end
+end)
 xb.MouseButton1Click:Connect(function()
 aberto=false Main.Visible=false FW.Visible=false
 if not ballPlaced then ballPlaced=true ball.Position=UDim2.fromOffset(Main.AbsolutePosition.X+Main.AbsoluteSize.X-BOLA_TAM,Main.AbsolutePosition.Y+100)end
