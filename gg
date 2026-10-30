@@ -1,0 +1,852 @@
+-- WxV HUB | KAITUN + AUTO RETURN + PLACE + HATCH V21 + TREADMILL
+local RS,CG,UIS,RUN,TS,CP=game:GetService("ReplicatedStorage"),game:GetService("CoreGui"),game:GetService("UserInputService"),game:GetService("RunService"),game:GetService("TweenService"),game:GetService("ContentProvider")
+local LP=game:GetService("Players").LocalPlayer
+local G=getgenv and getgenv()or _G
+_G.WxV_Tok=(_G.WxV_Tok or 0)+1
+local TOK=_G.WxV_Tok
+if G.wxv_speedconn then pcall(function()G.wxv_speedconn:Disconnect()end) G.wxv_speedconn=nil end
+local function alive()return _G.WxV_Tok==TOK end
+local function HRP()local c=LP.Character return c and c:FindFirstChild("HumanoidRootPart")end
+local function N(c,p,t)local o=Instance.new(c)for k,v in pairs(t)do o[k]=v end o.Parent=p return o end
+local FLAGS={place=false,hatch=false,tread=false,farm=false}
+local TASKING=false
+local ACTIVE_TASK="IDLE"
+local MOVE_SPEED=600
+local function tweenTo(pos)
+ local h=HRP()
+ if not h or typeof(pos)~="Vector3" then return false end
+ local dist=(h.Position-pos).Magnitude
+ if dist<1 then return true end
+ local tw=TS:Create(h,TweenInfo.new(dist/MOVE_SPEED,Enum.EasingStyle.Linear),{CFrame=CFrame.new(pos)})
+ tw:Play()
+ local finished=false
+ local connection=tw.Completed:Connect(function(state)finished=(state==Enum.PlaybackState.Completed)end)
+ local timeout=os.clock()+dist/MOVE_SPEED+3
+ while alive() and tw.PlaybackState==Enum.PlaybackState.Playing and os.clock()<timeout do task.wait(.05) end
+ if tw.PlaybackState==Enum.PlaybackState.Playing then tw:Cancel() end
+ connection:Disconnect()
+ return finished or (h.Position-pos).Magnitude<3
+end
+local sel={}
+local function hasF()for _,v in pairs(sel)do if v then return true end end return false end
+local RETURN,RET_BUSY,RET_OK
+for _,p in ipairs({CG,LP:WaitForChild("PlayerGui")})do pcall(function()for _,n in ipairs({"WxV_Top10","WxV_AUTO","WxV_TESTE","WxV_Teleport","WxV_TP"})do local o=p:FindFirstChild(n)if o then o:Destroy()end end end)end
+local MISC_ORDEM={"AUTO PLACE EGG","AUTO HATCH","AUTO TREADMILL"}
+local MISC_FUNCS={["AUTO PLACE EGG"]=function(on)FLAGS.place=on print("[WxV] PLACE",on) end,["AUTO HATCH"]=function(on)FLAGS.hatch=on print("[WxV] HATCH",on) end,["AUTO TREADMILL"]=function(on)FLAGS.tread=on print("[WxV] TREAD",on) end}
+local PK=RS:WaitForChild("Packages",10)
+local NET=PK and PK:WaitForChild("Networking",10)
+local RFc={}
+local function RF(n)if RFc[n]then return RFc[n]end local r=NET and NET:WaitForChild(n,5)RFc[n]=r return r end
+local function ESt()local ok,r=pcall(function()return require(RS.Client.EggState)end)return ok and r or nil end
+local mp
+local function meuPlot()
+if mp and mp.Parent then return mp end
+local pl=workspace:FindFirstChild("Plots")if not pl then return end
+for _,p in ipairs(pl:GetChildren())do
+local ok,nm=pcall(function()return p.PlotSign.PlayerPlotSign.Frame.PlayerName.Text end)
+if ok and(nm==LP.Name or nm==LP.DisplayName)then mp=p return p end
+end
+end
+
+-- ================= TREADMILL =================
+local hooked
+local function findfn(nu,nc)local s,gc=pcall(getgc)if not s then return end for _,f in next,gc do if typeof(f)=="function"and islclosure(f)then local u,k=debug.getupvalues(f),debug.getconstants(f)if u and #u==nu and k and #k==nc then return f end end end end
+local function ligar()
+if G.wxv_speedconn then return end
+pcall(function()
+if not hooked and getgc and hookfunction and islclosure then
+local f=findfn(19,15)local v7=f and debug.getupvalue(f,2)
+if v7 then local h3 h3=hookfunction(v7,newlclosure(function(a,b)if b and typeof(b)=="table"then setmetatable(b,{})end return h3(a,b)end))hooked=true end
+end
+end)
+G.wxv_speedconn=RUN.Heartbeat:Connect(function()local c=LP.Character local h=c and c:FindFirstChildOfClass("Humanoid")if h then h.WalkSpeed=430 end end)
+end
+local function desligar()
+if G.wxv_speedconn then pcall(function()G.wxv_speedconn:Disconnect()end)G.wxv_speedconn=nil end
+local c=LP.Character local h=c and c:FindFirstChildOfClass("Humanoid")if h then h.WalkSpeed=16 end
+end
+local onTread=false
+local treadRetryAt=0
+local treadMountedAt=0
+local treadAwaySince=nil
+local TREAD_LEAVE_DISTANCE=35
+local TREAD_LEAVE_GRACE=1.5
+local function treadmillDistance()
+ local plot=meuPlot()
+ local base=plot and plot:FindFirstChild("TreadmillBottom",true)
+ local root=HRP()
+ if not base or not root then return nil end
+ local ok,position=pcall(function()
+  return base:IsA("BasePart") and base.Position or base:GetPivot().Position
+ end)
+ if not ok then return nil end
+ return (root.Position-position).Magnitude
+end
+local function irEsteira()
+local plot=meuPlot()if not plot then warn("[WxV TREAD] Plot ainda nao encontrado") return false end
+local al=plot:FindFirstChild("TreadmillBottom",true)if not al then warn("[WxV TREAD] TreadmillBottom nao encontrado") return false end
+local cf=al:IsA("BasePart")and al.CFrame or al:GetPivot()
+local r=HRP()if not r then return false end
+ligar()
+r.CFrame=cf+Vector3.new(10,5,0)
+task.wait(.2)
+desligar()
+local rf=RF("RF/Treadmill/AskWearStill")
+if not rf then warn("[WxV TREAD] AskWearStill nao encontrado") return false end
+local ok,resultado=pcall(function()return rf:InvokeServer()end)
+if not ok or resultado==false then
+ warn("[WxV TREAD] Falha no AskWearStill:",resultado)
+ onTread=false
+ return false
+end
+-- O retorno positivo nao garante que a animacao de montar terminou.
+task.wait(.5)
+onTread=true
+treadMountedAt=os.clock()
+treadAwaySince=nil
+print("[WxV TREAD] Pedido aceito; monitorando saida manual")
+return true
+end
+local function doff()
+if not onTread then return end
+local rf=RF("RF/Treadmill/AskDoff")
+if rf then pcall(function()return rf:InvokeServer()end)end
+onTread=false
+treadAwaySince=nil
+end
+
+-- ================= AUTO PLACE =================
+local PL={Esp=6,Mar=7,Alt=4,Dist=18,Tol=3}
+local tent={}
+local plotU
+pcall(function()plotU=getupvalues(require(RS.Controllers.Game.Eggs.EggPlacementController).Start)[3]end)
+local function getPlot()
+if not plotU then
+ pcall(function()plotU=getupvalues(require(RS.Controllers.Game.Eggs.EggPlacementController).Start)[3]end)
+end
+if not plotU then return end
+local ok,r=pcall(function()return plotU.ResolvePlot(LP)end)
+if ok and r and r.PetArea and r.CenterPoint then return r end
+end
+local function myRecs()
+local E=ESt()if not E then return end
+local ok,g=pcall(function()return E.ReadOwnedEggs()end)
+if not ok or type(g)~="table"then return end
+for _,x in pairs(g)do if type(x)=="table"and tonumber(x.OwnerUserId)==LP.UserId and type(x.Records)=="table"then return x.Records end end
+end
+local function getEgg()
+local rc=myRecs()if not rc then return end
+for uid,r in pairs(rc)do if type(uid)=="string"and type(r)=="table"and not r.Placement and os.clock()>=(tent[uid]or 0)then return uid,r.AssetCategory or"Egg"end end
+end
+local function freePos(plot)
+local rc=myRecs()if not rc then return end
+local oc={}
+for _,r in pairs(rc)do if type(r)=="table"and type(r.Placement)=="table"and typeof(r.Placement.LocalCFrame)=="CFrame"then oc[#oc+1]=r.Placement.LocalCFrame.Position end end
+local a=plot.PetArea
+local w,d=math.max(0,a.Size.X-PL.Mar*2),math.max(0,a.Size.Z-PL.Mar*2)
+local cl,ln=math.max(1,math.floor(w/PL.Esp)+1),math.max(1,math.floor(d/PL.Esp)+1)
+for i=0,cl*ln-1 do
+local x=math.clamp(-w/2+(i%cl)*PL.Esp,-w/2,w/2)
+local z=math.clamp(-d/2+math.floor(i/cl)*PL.Esp,-d/2,d/2)
+local cf=plot.CenterPoint.CFrame:ToObjectSpace(CFrame.new(a.CFrame:PointToWorldSpace(Vector3.new(x,0,z)))*CFrame.Angles(0,math.rad(90),0))
+local busy=false
+for _,p in ipairs(oc)do local dx,dz=cf.Position.X-p.X,cf.Position.Z-p.Z if math.sqrt(dx*dx+dz*dz)<=PL.Tol then busy=true break end end
+if not busy then return cf end
+end
+end
+local function equipado(uid)local c=LP.Character if not c then return false end for _,i in ipairs(c:GetChildren())do if i:IsA("Tool")and i:GetAttribute("UID")==uid then return true end end return false end
+local function placeUm()
+local plot=getPlot()if not plot then warn("[WxV PLACE] Plot nao resolvido") return false end
+local cf=freePos(plot)if not cf then warn("[WxV PLACE] Sem posicao livre") return false end
+local uid=getEgg()if not uid then return false end
+local c=LP.Character local r=c and c:FindFirstChild("HumanoidRootPart")if not r then return false end
+local d=plot.PetArea.Position+Vector3.new(0,PL.Alt,0)
+if(r.Position-d).Magnitude>PL.Dist then if not tweenTo(d)then return false end task.wait(.2)end
+local Wr,Pr=RF("RF/EggWorld/AskWearTool"),RF("RF/EggWorld/AskPlaceEgg")
+if not Wr or not Pr then warn("[WxV PLACE] Remote nao encontrado") return false end
+if not equipado(uid)then
+local ok,res=pcall(function()return Wr:InvokeServer(uid)end)
+if not ok or res==false then warn("[WxV PLACE] AskWearTool falhou",uid,res) tent[uid]=os.clock()+5 return false end
+local t=os.clock()while os.clock()-t<3 and not equipado(uid)do task.wait(.1)end
+if not equipado(uid)then warn("[WxV PLACE] Equipamento nao confirmado",uid) tent[uid]=os.clock()+5 return false end
+task.wait(.3)
+end
+local ok,res=pcall(function()return Pr:InvokeServer({Uid=uid,LocalCFrame=cf})end)
+tent[uid]=os.clock()+(ok and res==true and 3 or 5)
+if not ok or res~=true then warn("[WxV PLACE] AskPlaceEgg falhou",uid,res) end
+return ok and res==true
+end
+local function placeAll()
+local n=0
+for _=1,30 do if not alive()then break end if placeUm()then n+=1 task.wait(.3)else break end end
+return n
+end
+local function temPlace()
+local plot=getPlot()if not plot then return false end
+if not freePos(plot)then return false end
+return getEgg()~=nil
+end
+
+-- ================= AUTO HATCH V21 =================
+local HC={H=4,Arr=.5,Del=2,Retry=5,Dist=15}
+local retryAt={}
+local function eggPos(u)
+local f=workspace:FindFirstChild("PlacedEggRenders")
+local m=f and f:FindFirstChild(tostring(LP.UserId).."_"..u)
+if not m then return end
+local ok,p=pcall(function()return m:IsA("Model")and m:GetPivot().Position or m.Position end)
+return ok and p or nil
+end
+local function readyEggs()
+local out={}
+local E=ESt()if not E then return out end
+local ok,g=pcall(function()return E.ReadOwnedEggs()end)
+if not ok or type(g)~="table"then return out end
+for _,x in pairs(g)do
+if type(x)=="table"and tonumber(x.OwnerUserId)==LP.UserId then
+for u,r in pairs(x.Records or{})do
+u=tostring(u)
+local ok2,rd=pcall(function()return E.IsReadyToHatch(u)end)
+if ok2 and rd==true then out[#out+1]={u=u,n=tostring(type(r)=="table"and r.AssetCategory or"Egg")}end
+end
+end
+end
+return out
+end
+local function hatchDue()for _,e in ipairs(readyEggs())do if os.clock()>=(retryAt[e.u]or 0)then return true end end return false end
+local function hatchOne(e)
+local E=ESt()if not E then return false end
+local ok,rd=pcall(function()return E.IsReadyToHatch(e.u)end)
+if not(ok and rd==true)then return false end
+local pos=eggPos(e.u)local r=HRP()
+if not pos or not r then return false end
+if(r.Position-pos).Magnitude>HC.Dist then
+if not tweenTo(pos+Vector3.new(0,HC.H,0))then return false end
+task.wait(HC.Arr)
+end
+local Hr,Fr=RF("RF/EggWorld/AskHatch"),RF("RF/EggWorld/AskFinishHatch")
+if not Hr or not Fr then return false end
+local ok1,acc=pcall(function()return Hr:InvokeServer(e.u)end)
+if not(ok1 and acc)then return false end
+task.wait(HC.Del)
+local ok2,fin=pcall(function()return Fr:InvokeServer(e.u)end)
+return ok2 and fin and true or false
+end
+local function hatchPass()
+local n=0
+for _,e in ipairs(readyEggs())do
+if not alive()then break end
+if os.clock()>=(retryAt[e.u]or 0)then
+if hatchOne(e)then retryAt[e.u]=nil n+=1 else retryAt[e.u]=os.clock()+HC.Retry end
+end
+end
+return n
+end
+
+-- ================= AUTO RETURN (sem UI, sempre TP) =================
+do
+local running,armado,retOk,MAXS=false,false,false,600
+local ORDEM={"Forest","Lake","Desert","Jungle","Snow","Volcano","Abyss Ocean","Prehistoric","Cosmic","Cherry Blossom","Titan Temple","Light Dark","Enchanted Forest"}
+local function nk(s)return(tostring(s):lower():gsub("%s",""))end
+local MAPA={}for i,n in ipairs(ORDEM)do MAPA[nk(n)]=i end
+local function prevIdx(i)return i==5 and 3 or i-1 end
+pcall(function()local nc=newcclosure or function(f)return f end local old old=hookmetamethod(game,"__namecall",nc(function(self,...)local m=getnamecallmethod()if m=="InvokeServer"or m=="FireServer"then local args,has={...},false for i=1,#args do local a=args[i]if typeof(a)=="table"then has=true local n={}for k,v in pairs(a)do n[k]=v end args[i]=n end end if has then return old(self,table.unpack(args))end end return old(self,...)end))end)
+local function mover(pos)
+for _=1,30 do
+local h=HRP()if not h then return false end
+local diff=pos-h.Position local d=diff.Magnitude
+if d<.5 then return true end
+local alvo=d>MAXS and h.Position+diff.Unit*MAXS or pos
+h.AssemblyLinearVelocity=Vector3.zero h.AssemblyAngularVelocity=Vector3.zero
+local c=LP.Character
+for _=1,3 do if not c then break end pcall(function()c:PivotTo(CFrame.new(alvo))end)task.wait(.02)end
+if alvo==pos then return true end
+task.wait(.03)
+end
+return true
+end
+local function lerArea()
+local a=LP:GetAttribute("AreaId")or LP:GetAttribute("Area")
+if a and a~=""then return tostring(a)end
+local c=LP.Character
+if c then local x=c:GetAttribute("AreaId")or c:GetAttribute("Area")if x and x~=""then return tostring(x)end end
+end
+local function posOf(a)
+local r local b=a:FindFirstChild("Bounds")
+if b then if b:IsA("BasePart")then r=b.Position elseif b:IsA("Model")then local ok,p=pcall(function()return b:GetPivot().Position end)if ok then r=p end end end
+if not r then local s,n=Vector3.zero,0 for _,o in ipairs(a:GetDescendants())do if o:IsA("BasePart")then s+=o.Position n+=1 end end if n>0 then r=s/n end end
+return r
+end
+local aC={}
+local function getAreaPos(nome)
+local key=nk(nome)if aC[key]then return aC[key]end
+local w=workspace:FindFirstChild("World")local a=w and w:FindFirstChild("Areas")local g=a and a:FindFirstChild("GuardAreas")
+if not g then return end
+local list={}
+for _,c in ipairs(g:GetChildren())do if nk(c.Name)==key then local p=posOf(c)if p then list[#list+1]=p end end end
+if #list==0 then return end
+if #list==1 then aC[key]=list[1]return list[1]end
+local h=HRP()local best,bd
+for _,p in ipairs(list)do local d=h and(p-h.Position).Magnitude or 0 if not bd or d<bd then best,bd=p,d end end
+return best
+end
+local sz
+local function getSafe()
+if sz then return sz end
+local w=workspace:FindFirstChild("World")local a=w and w:FindFirstChild("Areas")local e=a and a:FindFirstChild("EggCarryBounds")local s=e and e:FindFirstChild("SafeZone")
+if not s then return end
+sz=posOf(s)or(s:IsA("BasePart")and s.Position)
+return sz
+end
+local DR
+if NET then for _,v in ipairs(NET:GetDescendants())do if(v:IsA("RemoteFunction")or v:IsA("RemoteEvent"))and v.Name:find("AskFieldEggDrop",1,true)then DR=v break end end end
+local function drop()if not DR then return false end pcall(function()return DR:InvokeServer({Reason="PlayerRequest"})end)return true end
+local prompts,cd={},{}
+local function resolve(p)local o=p.Parent if not o then return end if o:IsA("BasePart")or o:IsA("Attachment")then return o end if o:IsA("Model")then return o.PrimaryPart or o:FindFirstChildWhichIsA("BasePart")end end
+local function addP(o)if o:IsA("ProximityPrompt")and o.Name=="CarryAreaEgg"then local pt=resolve(o)if pt then prompts[o]=pt end end end
+for _,o in ipairs(workspace:GetDescendants())do addP(o)end
+workspace.DescendantAdded:Connect(addP)
+workspace.DescendantRemoving:Connect(function(o)prompts[o]=nil cd[o]=nil end)
+local function atvP(p)local n=tick()if cd[p]and n-cd[p]<.05 then return end cd[p]=n pcall(function()p.HoldDuration=0 p.RequiresLineOfSight=false p.MaxActivationDistance=50 end)if fireproximityprompt then pcall(fireproximityprompt,p)end end
+task.spawn(function()while alive()do if not armado then task.wait(.25)else task.wait(.04)local h=HRP()if h then for p,pt in pairs(prompts)do if p.Enabled and pt.Parent then local bp=pt:IsA("Attachment")and pt.WorldPosition or pt.Position if(bp-h.Position).Magnitude<=25 then atvP(p)end end end end end end end)
+local ultimoCarry=false
+local function onCarry()
+if running then return end running=true retOk=false
+task.spawn(function()
+while running do
+local a=lerArea()local idx=a and MAPA[nk(a)]
+if not idx then task.wait(.1)continue end
+if idx<=1 then retOk=drop() running=false return end
+if idx<=3 then local s=getSafe()if s then mover(s+Vector3.new(0,3,0))end task.wait(.15)retOk=drop() running=false return end
+local prev=ORDEM[prevIdx(idx)]local pos=getAreaPos(prev)if not pos then break end
+mover(pos+Vector3.new(0,3,0))
+local t0,alvo=tick(),nk(prev)
+while tick()-t0<5 do local c=lerArea()if c and nk(c)==alvo then break end task.wait(.03)end
+task.wait(.3)retOk=drop()task.wait(.05)
+end
+running=false
+end)
+end
+task.spawn(function()
+local ev
+for _=1,21 do if NET then for _,v in ipairs(NET:GetDescendants())do if v:IsA("RemoteEvent")and v.Name:find("FieldEggCarry",1,true)then ev=v break end end end if ev then break end task.wait(3)end
+if ev then ev.OnClientEvent:Connect(function(d)if not alive()or type(d)~="table"then return end local c=d.IsCarrying==true if c and not ultimoCarry and armado and not running then onCarry()end ultimoCarry=c end)print("✅ Spy Return ativo")end
+end)
+RET_BUSY=function()return running or armado end
+RET_OK=function()return retOk end
+RETURN=function()
+if running then return end
+retOk=false armado=true
+if ultimoCarry then onCarry()end
+task.spawn(function()
+local t=tick()
+while not running and tick()-t<8 do task.wait(.05)end
+while running do task.wait(.1)end
+armado=false
+end)
+end
+end
+
+-- ================= KAITUN =================
+local EXPOENTE,STILL_TIME,MOVE_TOL=1.85,0.6,1.0
+local SOM_ABRIR,VOL_ABRIR,SOM_CLICK,VOL_CLICK="rbxassetid://139746569667955",3,"rbxassetid://87437544236708",1
+local IMG_BOLA,BOLA_TAM="rbxassetid://130772762815497",56
+local MUT={Silver=1.2,Golden=2.5,Rainbow=3.05,Bloom=1.5,["Spirit Bloom"]=3.0,Fractured=2.75,Scrambled=2.75,Parasite=3.0}
+local raridadeDB={}
+pcall(function()
+if getreg then for _,v in pairs(getreg())do if type(v)=="table"then
+if v.Directory then for nome,d in pairs(v.Directory)do if type(d)=="table"and d.Rarity then local r=d.Rarity if type(r)=="table"and r.Name then raridadeDB[nome]=tostring(r.Name)elseif type(r)=="string"then raridadeDB[nome]=r end end end end
+if v.ByRarity then for rar,pets in pairs(v.ByRarity)do if type(pets)=="table"then for _,pd in pairs(pets)do if type(pd)=="table"and pd._id then raridadeDB[pd._id]=tostring(rar)end end end end end
+end end end
+end)
+local function getRaridade(nome)
+local r=raridadeDB[nome]if r then return tostring(r)end
+local fb={Imp="Cosmic",["Demon Hound"]="Cosmic",["Sacred Moth"]="Cosmic",Peacock="Cosmic",Moth="Cosmic",Koi="Cosmic",["Spirit Panda"]="Cosmic",["Astral Jackalope"]="Cosmic",Mantis="Cosmic",Triceratops="Cosmic",["Snowy Owl"]="Cosmic",Rhino="Cosmic",Bronco="Cosmic",["Spirit Hare"]="Cosmic",Tralaledon="Secret",Gargoyle="Secret",["Dark Gargoyle"]="Secret",Cerberus="Secret",Toro="Mythic",["Enchanted Bluejay"]="Mythic"}
+return fb[nome]or"Common"
+end
+local function multMut(e)
+local m=1
+if type(e.Mutations)=="table"and next(e.Mutations)~=nil then for _,v in pairs(e.Mutations)do m=m*(MUT[tostring(v)]or 1)end
+elseif e.BaseMutation and e.BaseMutation~="None"then m=m*(MUT[tostring(e.BaseMutation)]or 1)end
+if e.HasParasite==true then m=m*MUT.Parasite end
+return m
+end
+local function fmt(n)local u,i={"","K","M","B","T","Qa","Qi"},1 while n>=1000 and i<#u do n=n/1000 i=i+1 end local s=string.format("%.2f",n):gsub("0+$",""):gsub("%.$","")return s..u[i]end
+local RAR={Cosmic={txt=Color3.fromRGB(120,180,255),bg=Color3.fromRGB(20,50,120)},Secret={txt=Color3.new(1,1,1),bg=Color3.fromRGB(40,40,40)},Eternal={txt=Color3.fromRGB(255,180,230),bg=Color3.fromRGB(120,30,80)},Divine={txt=Color3.fromRGB(255,240,130),bg=Color3.fromRGB(130,90,10)},Mythic={txt=Color3.fromRGB(255,170,170),bg=Color3.fromRGB(120,30,30)},Common={txt=Color3.fromRGB(200,200,200),bg=Color3.fromRGB(60,60,60)}}
+local idx,aidx,ready={},{},false
+task.spawn(function()
+local n=0
+for _,o in ipairs(RS:GetDescendants())do
+if o:IsA("Model")then idx[o.Name]=idx[o.Name]or{}table.insert(idx[o.Name],o)
+elseif o:IsA("Animation")then local a=o for _=1,4 do a=a.Parent if not a then break end local l=aidx[a.Name]or{}aidx[a.Name]=l if#l<12 then l[#l+1]=o end end end
+n+=1 if n%1500==0 then task.wait()end
+end
+ready=true
+end)
+local function score(m)local p=m:GetFullName():lower()local egg=p:find("egg",1,true)local pet=p:find("pet",1,true)or p:find("animal",1,true)if egg and not pet then return nil end return pet and(egg and 5 or 10)or 0 end
+local function addNames(t,v)if type(v)=="string"and v~=""then t[#t+1]=v elseif type(v)=="table"then for _,k in ipairs({"_id","DisplayName","Name"})do if type(v[k])=="string"then t[#t+1]=v[k]end end end end
+local function findModel(cat,a)
+local t0=os.clock()while not ready and os.clock()-t0<15 do task.wait(.2)end
+local t={}
+if type(a)=="table"then
+for _,k in ipairs({"Model","PetModel","Pet","PetId","PetName","ModelName"})do local v=a[k]if typeof(v)=="Instance"and v:IsA("Model")and score(v)then return v end addNames(t,v)end
+addNames(t,a._id)addNames(t,a.DisplayName)
+end
+addNames(t,cat)
+for _,n in ipairs(t)do local best,bs for _,m in ipairs(idx[n]or{})do local s=score(m)if s and(not bs or s>bs)then best,bs=m,s end end if best then return best end end
+end
+local function toAnim(v)
+if typeof(v)=="Instance"and v:IsA("Animation")then return v end
+if type(v)=="string"or type(v)=="number"then local s=tostring(v)if not s:find("rbx",1,true)and not s:find("http",1,true)then s="rbxassetid://"..s end local an=Instance.new("Animation")an.AnimationId=s return an end
+end
+local function candidatas(c,a,names)
+local idle,walk,resto,seen={},{},{},{}
+local function add(an,nome)
+if not an or seen[an]then return end seen[an]=true
+local n=(nome or an.Name or""):lower()
+if n:find("idle",1,true)then idle[#idle+1]=an elseif n:find("walk",1,true)or n:find("run",1,true)then walk[#walk+1]=an else resto[#resto+1]=an end
+end
+for _,d in ipairs(c:GetDescendants())do if d:IsA("Animation")then add(d,d.Name)end end
+local A=type(a)=="table"and a.Animations
+if type(A)=="table"then for k,v in pairs(A)do add(toAnim(v),tostring(k))end
+elseif typeof(A)=="Instance"then for _,ch in ipairs(A:GetChildren())do add(toAnim(ch),ch.Name)end end
+for _,nm in ipairs(names or{})do for _,an in ipairs(aidx[nm]or{})do add(an,an.Name)end end
+local out={}
+for _,l in ipairs({idle,walk,resto})do for _,x in ipairs(l)do out[#out+1]=x end end
+return out
+end
+local tracked,firstScan,totalLidos,totalSlot={},true,0,0
+local function atualizarRastreio()
+local E=ESt()if not E then return end
+local ok,snap=pcall(function()return E.ReadFieldEggs()end)
+if not ok or not snap or not snap.Records then return end
+local AS=require(RS.Data.Assets)
+local agora,vistos=os.clock(),{}
+totalLidos,totalSlot=0,0
+for _,e in ipairs(snap.Records)do
+totalLidos+=1
+if e.State=="Slot"and e.BoundsCFrame and e.AssetCategory and e.AssetCategory~=""and e.Uid then
+totalSlot+=1
+local uid=tostring(e.Uid)vistos[uid]=true
+local pos=e.BoundsCFrame.Position
+local t=tracked[uid]
+if not t then t={ref=pos,lastMove=firstScan and-math.huge or agora}tracked[uid]=t
+elseif(pos-t.ref).Magnitude>MOVE_TOL then t.ref=pos t.lastMove=agora end
+local nome=e.AssetCategory
+local a=(AS.Directory and AS.Directory[nome])or AS[nome]
+local base=type(a)=="table"and tonumber(a.EarningRate)or 0
+local scale=tonumber(e.AssetScale)or 1
+t.d={uid=uid,nome=nome,asset=a,exibe=tostring((type(a)=="table"and a.DisplayName)or nome),icon=(type(a)=="table"and type(a.Icon)=="string")and a.Icon or"",rar=getRaridade(nome),final=base*(scale^EXPOENTE)*multMut(e),pos=pos}
+end
+end
+for uid in pairs(tracked)do if not vistos[uid]then tracked[uid]=nil end end
+if totalSlot>0 then firstScan=false end
+end
+local function listaVisivel()local agora,l=os.clock(),{}for _,t in pairs(tracked)do if t.d and agora-t.lastMove>=STILL_TIME then l[#l+1]=t.d end end return l end
+local manualGo=nil
+local function parar()
+ if manualGo then
+  local b=manualGo.btn
+  if b and b.Parent then b.Text="Go" b.BackgroundColor3=Color3.fromRGB(40,165,75) end
+ end
+ manualGo=nil
+end
+local function firePrompt()
+local hrp=HRP()if not hrp then return end
+local best,bd
+for _,o in ipairs(workspace:GetDescendants())do
+if o:IsA("ProximityPrompt")and(o.Name=="CarryHalloweenEgg"or o.Name=="CarryAreaEgg")then
+local pa=o.Parent
+if pa and(pa:IsA("BasePart")or pa:IsA("Attachment"))then
+local pp=pa:IsA("Attachment")and pa.WorldPosition or pa.Position
+local d=(pp-hrp.Position).Magnitude
+if d<30 and(not bd or d<bd)then best,bd=o,d end
+end
+end
+end
+if best then
+pcall(function()best.HoldDuration=0 best.RequiresLineOfSight=false best.MaxActivationDistance=50 end)
+if fireproximityprompt then pcall(fireproximityprompt,best)end
+else warn("Nenhum prompt perto")end
+end
+local function andarAteOvo(alvo,btnGo)
+ if manualGo and manualGo.btn==btnGo then parar() return end
+ parar()
+ manualGo={pos=alvo,btn=btnGo}
+ btnGo.Text="Queued"
+ btnGo.BackgroundColor3=Color3.fromRGB(220,145,35)
+end
+
+-- ================= GERENCIADOR DE TAREFAS (sem interromper) =================
+local fail={}
+local function topLista()
+local any,out=hasF(),{}
+for _,p in ipairs(listaVisivel())do
+if(not any or sel[p.rar:lower()]==true)and not(fail[p.uid]and os.clock()<fail[p.uid])then out[#out+1]=p end
+end
+table.sort(out,function(a,b)if a.final~=b.final then return a.final>b.final end return a.uid<b.uid end)
+local top={}for i=1,math.min(#out,10)do top[i]=out[i]end
+return top
+end
+local function irOvo(alvo)
+local t0=os.clock()
+while alive()and os.clock()-t0<45 do
+local c=LP.Character local hum=c and c:FindFirstChildOfClass("Humanoid")local h=HRP()
+if not hum or not h then return false end
+if(Vector3.new(h.Position.X,0,h.Position.Z)-Vector3.new(alvo.X,0,alvo.Z)).Magnitude<=3 then return true end
+hum:MoveTo(alvo)task.wait(.1)
+end
+return false
+end
+local function pegar(p)
+if not irOvo(p.pos)then return false end
+task.wait(.2)firePrompt()
+if RETURN then pcall(RETURN)end
+local t=os.clock()
+while RET_BUSY and RET_BUSY()and alive()and os.clock()-t<90 do task.wait(.1)end
+return RET_OK and RET_OK()or false
+end
+-- Escalonador cooperativo: cada ação termina antes da próxima.
+-- GO é manual e fica na fila; Place > Hatch > GO > Farm > Treadmill.
+local function executarGo()
+ local pedido=manualGo
+ if not pedido then return end
+ manualGo=nil
+ local b=pedido.btn
+ if b and b.Parent then b.Text="Stop" b.BackgroundColor3=Color3.fromRGB(210,55,55) end
+ local ok=irOvo(pedido.pos)
+ if ok then
+  task.wait(.2)
+  firePrompt()
+  if RETURN then RETURN() end
+  local t=os.clock()
+  while alive() and RET_BUSY and RET_BUSY() and os.clock()-t<100 do task.wait(.1) end
+ end
+ if b and b.Parent then b.Text="Go" b.BackgroundColor3=Color3.fromRGB(40,165,75) end
+end
+local function executarUma(titulo,fn)
+ TASKING=true
+ ACTIVE_TASK=titulo
+ local ok,res=pcall(fn)
+ if not ok then warn("WxV ["..titulo.."]:",res) end
+ ACTIVE_TASK="IDLE"
+ TASKING=false
+ return ok and res
+end
+task.spawn(function()
+ while alive() do
+  local ok,err=pcall(function()
+   -- Se o jogador sair da esteira manualmente, nao usar AskDoff:
+   -- somente liberar o estado local e deixar o escalonador remontar
+   -- quando nao houver nenhuma tarefa de prioridade maior.
+   if onTread and ACTIVE_TASK=="IDLE" and os.clock()-treadMountedAt>2 then
+    local dist=treadmillDistance()
+    if dist and dist>TREAD_LEAVE_DISTANCE then
+     treadAwaySince=treadAwaySince or os.clock()
+     if os.clock()-treadAwaySince>=TREAD_LEAVE_GRACE then
+      print("[WxV TREAD] Saida manual detectada; aguardando prioridades antes de remontar")
+      onTread=false
+      treadAwaySince=nil
+      treadRetryAt=os.clock()+.5
+     end
+    else
+     treadAwaySince=nil
+    end
+   end
+   if FLAGS.place and temPlace() then
+    if onTread then doff() end
+    executarUma("PLACE",placeUm)
+   elseif FLAGS.hatch and hatchDue() then
+    if onTread then doff() end
+    executarUma("HATCH",function()
+     for _,e in ipairs(readyEggs())do
+      if os.clock()>=(retryAt[e.u]or 0)then
+       local success=hatchOne(e)
+       retryAt[e.u]=success and nil or (os.clock()+HC.Retry)
+       return success
+      end
+     end
+    end)
+   elseif manualGo then
+    if onTread then doff() end
+    executarUma("GO",executarGo)
+   elseif FLAGS.farm and topLista()[1] then
+    if onTread then doff() end
+    executarUma("FARM",function()
+     local p=topLista()[1]
+     if not p then return end
+     if not pegar(p)then fail[p.uid]=os.clock()+30 end
+    end)
+   elseif FLAGS.tread then
+    if not onTread and os.clock()>=treadRetryAt then
+     local sucesso=executarUma("TREADMILL",irEsteira)
+     treadRetryAt=os.clock()+(sucesso and 1 or 3)
+    end
+    task.wait(.5)
+   else
+    -- Nenhuma tarefa pendente: nao chamar AskDoff sem motivo.
+    task.wait(.3)
+   end
+  end)
+  if not ok then
+   TASKING=false ACTIVE_TASK="IDLE"
+   warn("WxV gerenciador:",err)
+   task.wait(1)
+  else
+   task.wait(.1)
+  end
+ end
+end)
+
+-- ================= UI =================
+task.defer(function()
+task.wait(.5)
+local function cr(p,r)N("UICorner",p,{CornerRadius=UDim.new(0,r)})end
+local W,BG,CARD,LINE,RED,GREEN=Color3.new(1,1,1),Color3.fromRGB(16,16,20),Color3.fromRGB(28,28,34),Color3.fromRGB(48,48,58),Color3.fromRGB(235,40,40),Color3.fromRGB(110,255,140)
+local SG=N("ScreenGui",nil,{Name="WxV_Top10",ResetOnSpawn=false,IgnoreGuiInset=true,ZIndexBehavior=Enum.ZIndexBehavior.Sibling})
+if not pcall(function()SG.Parent=CG end)or not SG.Parent then SG.Parent=LP:WaitForChild("PlayerGui")end
+local somAbrir=N("Sound",SG,{SoundId=SOM_ABRIR,Volume=VOL_ABRIR})
+local function tocarSom()pcall(function()somAbrir.TimePosition=0 somAbrir:Play()end)end
+local somClick=N("Sound",SG,{SoundId=SOM_CLICK,Volume=VOL_CLICK})
+local function tocarClick()pcall(function()local s=somClick:Clone()s.Parent=SG s:Play()task.delay(3,function()s:Destroy()end)end)end
+local function makeDraggable(frame,handle)
+local dragging,ds,sp
+handle.InputBegan:Connect(function(i)if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging=true ds=i.Position sp=frame.Position i.Changed:Connect(function()if i.UserInputState==Enum.UserInputState.End then dragging=false end end)end end)
+UIS.InputChanged:Connect(function(i)if dragging and(i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch)then local d=i.Position-ds frame.Position=UDim2.new(sp.X.Scale,sp.X.Offset+d.X,sp.Y.Scale,sp.Y.Offset+d.Y)end end)
+end
+local function dragClick(frame,onClick)
+local dragging,moved,ds,sp
+frame.InputBegan:Connect(function(i)if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then dragging,moved=true,false ds,sp=i.Position,frame.Position i.Changed:Connect(function()if i.UserInputState==Enum.UserInputState.End then dragging=false if not moved and onClick then onClick()end end end)end end)
+UIS.InputChanged:Connect(function(i)if dragging and(i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch)then local d=i.Position-ds if d.Magnitude>6 then moved=true end if moved then frame.Position=UDim2.new(sp.X.Scale,sp.X.Offset+d.X,sp.Y.Scale,sp.Y.Offset+d.Y)end end end)
+end
+local function addClick(b)
+local os0=b.Size
+b.MouseButton1Down:Connect(function()tocarClick()TS:Create(b,TweenInfo.new(.1),{Size=UDim2.new(os0.X.Scale,os0.X.Offset-3,os0.Y.Scale,os0.Y.Offset-3)}):Play()end)
+b.MouseButton1Up:Connect(function()TS:Create(b,TweenInfo.new(.1),{Size=os0}):Play()end)
+b.MouseLeave:Connect(function()TS:Create(b,TweenInfo.new(.1),{Size=os0}):Play()end)
+end
+local MW,MH,CH=238,322,56
+local Main=N("Frame",SG,{Size=UDim2.fromOffset(MW,MH),Position=UDim2.new(1,-MW-8,0,44),BackgroundColor3=BG,BorderSizePixel=0,Active=true,ClipsDescendants=true})
+cr(Main,9)N("UIStroke",Main,{Color=Color3.fromRGB(150,20,20),Thickness=1.5})
+local mainScale=N("UIScale",Main,{Scale=1})
+local aberto=false
+local function animarAbrir()if aberto then return end aberto=true tocarSom()Main.Visible=true mainScale.Scale=.7 TS:Create(mainScale,TweenInfo.new(.35,Enum.EasingStyle.Back,Enum.EasingDirection.Out),{Scale=1}):Play()end
+local hd=N("Frame",Main,{Size=UDim2.new(1,0,0,24),BackgroundTransparency=1,Active=true})
+cr(N("Frame",Main,{Position=UDim2.fromOffset(8,24),Size=UDim2.new(1,-16,0,2),BackgroundColor3=RED,BorderSizePixel=0}),1)
+local left=N("Frame",hd,{Position=UDim2.fromOffset(8,0),Size=UDim2.new(1,-80,1,0),BackgroundTransparency=1})
+N("UIListLayout",left,{FillDirection=Enum.FillDirection.Horizontal,VerticalAlignment=Enum.VerticalAlignment.Center,Padding=UDim.new(0,4)})
+N("TextLabel",left,{AutomaticSize=Enum.AutomaticSize.X,Size=UDim2.new(0,0,0,18),BackgroundTransparency=1,RichText=true,Text='<font color="#ff2a2a">WxV</font> <font color="#ffffff">HUB</font>',Font=Enum.Font.GothamBold,TextSize=11,TextColor3=W})
+cr(N("Frame",left,{Size=UDim2.fromOffset(5,5),BackgroundColor3=Color3.fromRGB(60,225,100),BorderSizePixel=0}),3)
+N("TextLabel",left,{AutomaticSize=Enum.AutomaticSize.X,Size=UDim2.new(0,0,0,12),BackgroundTransparency=1,Text="KAITUN",Font=Enum.Font.GothamBold,TextSize=7,TextColor3=Color3.fromRGB(170,175,185)})
+local fbtn=N("TextButton",hd,{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-24,.5,0),Size=UDim2.fromOffset(36,16),BackgroundColor3=Color3.fromRGB(44,44,54),Text="Filter",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=7,AutoButtonColor=false})cr(fbtn,8)addClick(fbtn)
+local xb=N("TextButton",hd,{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-5,.5,0),Size=UDim2.fromOffset(16,16),BackgroundColor3=Color3.fromRGB(70,26,26),Text="X",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=8,AutoButtonColor=false})cr(xb,8)addClick(xb)
+makeDraggable(Main,hd)
+local TAB_ON,TAB_OFF=Color3.fromRGB(200,30,30),Color3.fromRGB(38,38,48)
+local tabF=N("TextButton",Main,{Position=UDim2.fromOffset(8,30),Size=UDim2.new(.5,-10,0,18),BackgroundColor3=TAB_ON,Text="FARM",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=9,AutoButtonColor=false})cr(tabF,5)
+local tabM=N("TextButton",Main,{Position=UDim2.new(.5,2,0,30),Size=UDim2.new(.5,-10,0,18),BackgroundColor3=TAB_OFF,Text="MISC",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=9,AutoButtonColor=false})cr(tabM,5)
+local farmPage=N("Frame",Main,{Position=UDim2.fromOffset(0,52),Size=UDim2.new(1,0,1,-52),BackgroundTransparency=1})
+local miscPage=N("Frame",Main,{Position=UDim2.fromOffset(0,52),Size=UDim2.new(1,0,1,-52),BackgroundTransparency=1,Visible=false})
+local FWHide=function()end
+local function setTab(t)
+local f=(t=="FARM")
+farmPage.Visible=f miscPage.Visible=not f
+if not f then FWHide()end
+TS:Create(tabF,TweenInfo.new(.15),{BackgroundColor3=f and TAB_ON or TAB_OFF}):Play()
+TS:Create(tabM,TweenInfo.new(.15),{BackgroundColor3=f and TAB_OFF or TAB_ON}):Play()
+end
+tabF.MouseButton1Down:Connect(tocarClick)tabM.MouseButton1Down:Connect(tocarClick)
+local miscState={}
+for i,nome in ipairs(MISC_ORDEM)do
+local row=N("Frame",miscPage,{Position=UDim2.fromOffset(8,4+(i-1)*34),Size=UDim2.new(1,-16,0,28),BackgroundColor3=CARD,BorderSizePixel=0})
+cr(row,7)N("UIStroke",row,{Color=LINE,Thickness=1})
+N("TextLabel",row,{Position=UDim2.fromOffset(10,0),Size=UDim2.new(1,-46,1,0),BackgroundTransparency=1,Text=nome,TextColor3=W,Font=Enum.Font.GothamBold,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left})
+local box=N("TextButton",row,{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-8,.5,0),Size=UDim2.fromOffset(20,20),BackgroundColor3=Color3.fromRGB(44,44,54),Text="",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=12,AutoButtonColor=false})
+cr(box,5)local bs=N("UIStroke",box,{Color=Color3.fromRGB(90,90,105),Thickness=1.5})
+addClick(box)
+miscState[nome]=false
+box.MouseButton1Click:Connect(function()
+miscState[nome]=not miscState[nome]
+local on=miscState[nome]
+box.Text=on and"✓"or""
+TS:Create(box,TweenInfo.new(.15),{BackgroundColor3=on and Color3.fromRGB(40,165,75)or Color3.fromRGB(44,44,54)}):Play()
+bs.Color=on and Color3.fromRGB(110,255,140)or Color3.fromRGB(90,90,105)
+local fn=MISC_FUNCS[nome]
+if fn then task.spawn(function()local ok,err=pcall(fn,on)if not ok then warn("WxV MISC "..nome..":",err)end end)end
+end)
+end
+local fm=N("TextButton",farmPage,{Position=UDim2.fromOffset(8,2),Size=UDim2.new(1,-16,0,20),BackgroundColor3=Color3.fromRGB(40,165,75),Text="AUTO FARM",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=9,AutoButtonColor=false})cr(fm,5)addClick(fm)
+local LY=28
+local sc=N("ScrollingFrame",farmPage,{Position=UDim2.fromOffset(5,LY),Size=UDim2.new(1,-10,1,-LY-4),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,ScrollBarImageColor3=Color3.fromRGB(120,120,130),AutomaticCanvasSize=Enum.AutomaticSize.Y,CanvasSize=UDim2.new(),ElasticBehavior=Enum.ElasticBehavior.Never})
+N("UIListLayout",sc,{Padding=UDim.new(0,4),SortOrder=Enum.SortOrder.LayoutOrder})N("UIPadding",sc,{PaddingRight=UDim.new(0,4)})
+local empty=N("TextLabel",farmPage,{Position=UDim2.fromOffset(8,LY),Size=UDim2.new(1,-16,0,40),BackgroundTransparency=1,Text="",TextColor3=Color3.fromRGB(150,150,160),Font=Enum.Font.GothamBold,TextSize=10,TextWrapped=true,Visible=false})
+local FW=N("Frame",SG,{Size=UDim2.fromOffset(130,190),Position=UDim2.fromOffset(20,100),BackgroundColor3=BG,BorderSizePixel=0,Visible=false,Active=true})
+cr(FW,9)N("UIStroke",FW,{Color=Color3.fromRGB(150,20,20),Thickness=1.5})
+FWHide=function()FW.Visible=false end
+local fhd=N("Frame",FW,{Size=UDim2.new(1,0,0,24),BackgroundTransparency=1,Active=true})
+N("TextLabel",fhd,{Position=UDim2.fromOffset(10,0),Size=UDim2.new(1,-40,1,0),BackgroundTransparency=1,Text="Filter",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=11,TextXAlignment=Enum.TextXAlignment.Left})
+local fx=N("TextButton",fhd,{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-5,.5,0),Size=UDim2.fromOffset(16,16),BackgroundColor3=Color3.fromRGB(70,26,26),Text="X",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=8,AutoButtonColor=false})cr(fx,8)addClick(fx)makeDraggable(FW,fhd)
+local chips={}
+local FILT={"Cosmic","Secret","Eternal","Divine","Mythic"}
+local ST={cosmic={a=Color3.fromRGB(18,36,130),b=Color3.fromRGB(52,96,225)},secret={a=Color3.new(0,0,0),b=Color3.fromRGB(45,45,52)},eternal={a=Color3.fromRGB(255,95,175),b=Color3.fromRGB(255,160,215)},divine={a=Color3.fromRGB(255,190,20),b=Color3.fromRGB(255,235,120)},mythic={a=Color3.fromRGB(255,95,95),b=Color3.fromRGB(255,150,150)}}
+local vps,ang={},0
+RUN.RenderStepped:Connect(function(dt)
+if not SG.Parent or not Main.Visible or not farmPage.Visible then return end
+ang+=dt*.8
+for _,r in ipairs(vps)do
+if r.vp.Parent and r.cam then
+r.cam.CFrame=CFrame.lookAt(r.center+Vector3.new(math.sin(ang)*r.dist,r.h,math.cos(ang)*r.dist),r.center)
+if r.animator and r.track then
+pcall(function()r.animator:StepAnimations(dt)end)
+local okp,tp=pcall(function()return r.track.TimePosition end)
+if okp then
+if r.lastTP and math.abs(tp-r.lastTP)<1e-4 then r.stall=(r.stall or 0)+dt else r.stall=0 end
+r.lastTP=tp
+if r.stall>1.5 then r.animator,r.track=nil,nil r.bob=true end
+end
+elseif r.bob and r.model then
+local t=os.clock()
+pcall(function()r.model:PivotTo(r.base*CFrame.new(0,math.sin(t*4)*r.ext*.04,0)*CFrame.Angles(0,0,math.sin(t*3)*.06))end)
+end
+end
+end
+end)
+local function carregar3D(r,p)
+task.spawn(function()
+local ok,err=pcall(function()
+local m=findModel(p.nome,p.asset)
+if not m or not r.vp.Parent then return end
+local c=m:Clone()
+for _,d in ipairs(c:GetDescendants())do if d:IsA("BaseScript")or d:IsA("Sound")then d:Destroy()elseif d:IsA("BasePart")then d.Anchored=false end end
+local root=c.PrimaryPart or c:FindFirstChild("HumanoidRootPart")or c:FindFirstChildWhichIsA("BasePart",true)
+if root then root.Anchored=true end
+c.Parent=r.vp
+local cf,sz2=c:GetBoundingBox()
+local ext=math.max(sz2.X,sz2.Y,sz2.Z,.5)
+local cam=N("Camera",r.vp,{FieldOfView=40})
+r.vp.CurrentCamera=cam
+r.cam,r.center,r.dist,r.h=cam,cf.Position,ext*1.7,ext*.2
+r.model,r.base,r.ext,r.nome=c,c:GetPivot(),ext,p.nome
+r.icon.Visible=false
+local an=c:FindFirstChildWhichIsA("Animator",true)
+if not an then
+local ctl=c:FindFirstChildWhichIsA("Humanoid",true)or c:FindFirstChildWhichIsA("AnimationController",true)or N("AnimationController",c,{})
+an=ctl:FindFirstChildOfClass("Animator")or N("Animator",ctl,{})
+end
+local lista={}
+local A=type(p.asset)=="table"and p.asset.Animations
+if type(A)=="table"then for _,k in ipairs({"Idle","Walk"})do if typeof(A[k])=="Instance"then lista[#lista+1]=A[k]end end end
+for _,a in ipairs(candidatas(c,p.asset,{p.nome,p.exibe}))do lista[#lista+1]=a end
+local got
+for i,anim in ipairs(lista)do
+if i>6 then break end
+pcall(function()CP:PreloadAsync({anim})end)
+local okT,tr=pcall(function()return an:LoadAnimation(anim)end)
+if okT and tr then
+tr.Looped=true tr.Priority=Enum.AnimationPriority.Action
+tr:Play(0)
+local t0=os.clock()
+while tr.Length<=0 and os.clock()-t0<4 do task.wait(.05)end
+if tr.Length>0 then got=tr break end
+pcall(function()tr:Stop()end)
+end
+end
+if got then r.animator,r.track=an,got else r.bob=true end
+end)
+if not ok then warn("WxV 3D erro:",p.nome,err)end
+end)
+end
+local function renderPets(dados)
+for _,c in ipairs(sc:GetChildren())do if c:IsA("Frame")then c:Destroy()end end
+vps={}
+table.sort(dados,function(a,b)if a.final~=b.final then return a.final>b.final end return a.uid<b.uid end)
+for i=1,math.min(#dados,10)do
+local p=dados[i]
+local cores=RAR[p.rar]or RAR.Common
+local f=N("Frame",sc,{Size=UDim2.new(1,0,0,CH),BackgroundColor3=CARD,BorderSizePixel=0,LayoutOrder=i})
+cr(f,8)N("UIStroke",f,{Color=LINE,Thickness=1})
+N("TextLabel",f,{Position=UDim2.fromOffset(5,2),Size=UDim2.fromOffset(42,10),BackgroundTransparency=1,Text="#"..i,TextColor3=Color3.fromRGB(255,200,40),Font=Enum.Font.GothamBold,TextSize=9})
+local tf=N("Frame",f,{Position=UDim2.fromOffset(5,13),Size=UDim2.fromOffset(40,40),BackgroundColor3=Color3.fromRGB(20,20,26),BorderSizePixel=0,ClipsDescendants=true})
+cr(tf,10)N("UIStroke",tf,{Color=cores.txt,Thickness=1.2,Transparency=.2})
+local icon=N("ImageLabel",tf,{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,ScaleType=Enum.ScaleType.Fit,Image=p.icon})
+local vp=N("ViewportFrame",tf,{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Ambient=Color3.fromRGB(190,190,190),LightColor=W})
+local r={vp=vp,icon=icon}
+vps[#vps+1]=r
+carregar3D(r,p)
+N("TextLabel",f,{Position=UDim2.fromOffset(52,6),Size=UDim2.new(1,-92,0,12),BackgroundTransparency=1,Text=p.exibe,TextColor3=W,Font=Enum.Font.GothamBold,TextSize=10,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd})
+N("TextLabel",f,{Position=UDim2.fromOffset(52,20),Size=UDim2.new(1,-92,0,15),BackgroundTransparency=1,Text=fmt(p.final).."/s",TextColor3=GREEN,Font=Enum.Font.GothamMedium,TextSize=12,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd})
+local pill=N("Frame",f,{Position=UDim2.fromOffset(52,38),Size=UDim2.fromOffset(48,12),BackgroundColor3=cores.bg,BorderSizePixel=0})
+cr(pill,6)N("UIStroke",pill,{Color=cores.txt,Thickness=1,Transparency=.5})
+N("TextLabel",pill,{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Text=p.rar:upper(),TextColor3=cores.txt,Font=Enum.Font.GothamBold,TextSize=7})
+local go=N("TextButton",f,{AnchorPoint=Vector2.new(1,.5),Position=UDim2.new(1,-6,.5,0),Size=UDim2.fromOffset(32,22),BackgroundColor3=Color3.fromRGB(40,165,75),Text="Go",TextColor3=W,Font=Enum.Font.GothamBold,TextSize=10,AutoButtonColor=false})
+cr(go,6)addClick(go)
+go.MouseButton1Click:Connect(function()if p.pos then andarAteOvo(p.pos,go)end end)
+end
+end
+local ultimoHash=""
+local function atualizarLista(force)
+local any=hasF()
+local fil={}
+for _,p in ipairs(listaVisivel())do if not any or sel[p.rar:lower()]==true then fil[#fil+1]=p end end
+if#fil==0 then
+empty.Visible=true
+if totalLidos==0 then empty.Text="Nenhum ovo lido do jogo"elseif totalSlot==0 then empty.Text="Ovos: "..totalLidos.." | nenhum em Slot"elseif any then empty.Text="Nenhum ovo com esse filtro"else empty.Text="Ovos em Slot: "..totalSlot.." (esperando ficar parados)"end
+else empty.Visible=false end
+local partes={}
+for _,p in ipairs(fil)do partes[#partes+1]=p.uid..":"..math.floor(p.final)end
+table.sort(partes)
+local hash=table.concat(partes,";")
+if hash~=ultimoHash or force then
+local ok,err=pcall(renderPets,fil)
+if ok then ultimoHash=hash else empty.Visible=true empty.Text="ERRO UI: "..tostring(err):sub(1,80)warn("WxV renderPets:",err)end
+end
+end
+local function paint()
+local n=0
+for _,c in pairs(chips)do
+local on=sel[c.key]==true
+if on then n+=1 end
+c.f.BackgroundTransparency=on and 0 or .5
+c.b.TextTransparency=on and 0 or .25
+c.b.Text=(on and"✓ "or"")..c.n
+end
+fbtn.BackgroundColor3=n>0 and RED or Color3.fromRGB(44,44,54)
+fbtn.Text=n>0 and("Filter "..n)or"Filter"
+atualizarLista(true)
+end
+for i,n in ipairs(FILT)do
+local key=n:lower()local k=ST[key]
+local f=N("Frame",FW,{Position=UDim2.fromOffset(8,30+(i-1)*30),Size=UDim2.new(1,-16,0,25),BackgroundColor3=W,BorderSizePixel=0})
+cr(f,7)N("UIGradient",f,{Color=ColorSequence.new(k.a,k.b)})N("UIStroke",f,{Color=k.b,Thickness=1,Transparency=.6})
+local b=N("TextButton",f,{Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Text=n,TextColor3=W,Font=Enum.Font.GothamBold,TextSize=11,AutoButtonColor=false})
+chips[n]={f=f,b=b,n=n,key=key}
+b.MouseButton1Down:Connect(tocarClick)
+b.MouseButton1Click:Connect(function()sel[key]=not sel[key]or nil paint()end)
+end
+task.spawn(function()
+while SG.Parent and alive()do
+local ok,err=pcall(atualizarRastreio)if not ok then warn("WxV rastreio:",err)end
+local ok2,err2=pcall(atualizarLista,false)if not ok2 then warn("WxV lista:",err2)end
+RUN.Heartbeat:Wait()
+end
+end)
+fm.MouseButton1Click:Connect(function()
+FLAGS.farm=not FLAGS.farm
+fm.Text=FLAGS.farm and"STOP"or"AUTO FARM"
+TS:Create(fm,TweenInfo.new(.15),{BackgroundColor3=FLAGS.farm and Color3.fromRGB(210,55,55)or Color3.fromRGB(40,165,75)}):Play()
+end)
+tabF.MouseButton1Click:Connect(function()setTab("FARM")end)
+tabM.MouseButton1Click:Connect(function()setTab("MISC")end)
+local ball=N("ImageButton",SG,{Size=UDim2.fromOffset(BOLA_TAM,BOLA_TAM),BackgroundColor3=BG,Image=IMG_BOLA,ScaleType=Enum.ScaleType.Crop,AutoButtonColor=false,Visible=false,Active=true,ClipsDescendants=true})
+cr(ball,BOLA_TAM//2)N("UIStroke",ball,{Color=RED,Thickness=2})
+local ballPlaced=false
+dragClick(ball,function()ball.Visible=false animarAbrir()end)
+xb.MouseButton1Click:Connect(function()
+aberto=false Main.Visible=false FW.Visible=false
+if not ballPlaced then ballPlaced=true ball.Position=UDim2.fromOffset(Main.AbsolutePosition.X+Main.AbsoluteSize.X-BOLA_TAM,Main.AbsolutePosition.Y+100)end
+ball.Visible=true
+end)
+fbtn.MouseButton1Click:Connect(function()if farmPage.Visible then FW.Visible=not FW.Visible end end)
+fx.MouseButton1Click:Connect(function()FW.Visible=false end)
+animarAbrir()
+end)
+print("WxV HUB (Kaitun + Place + Hatch V21 + Treadmill) carregado")
